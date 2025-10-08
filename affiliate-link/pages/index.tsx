@@ -1,38 +1,61 @@
 // pages/index.tsx
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 // โหลดแบบ client-only กัน SSR ใช้ env ฝั่ง client ไม่เจอ
 const RealtimePanel = dynamic(() => import('../components/RealtimePanel'), { ssr: false });
 
+type Platform = 'lazada' | 'shopee';
+
 export default function Home() {
-  const [platform, setPlatform] = useState<'lazada'|'shopee'>('lazada');
+  const [platform, setPlatform] = useState<Platform>('lazada');
   const [url, setUrl] = useState('');
   const [productName, setProductName] = useState(''); // ชื่อสินค้า → ทำ subid
-  const [result, setResult] = useState<{short_url:string, affiliate_url:string}|null>(null);
+  const [result, setResult] = useState<{short_url:string, affiliate_url:string, subid?: string}|null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  const createLink = async () => {
+  const placeholder = useMemo(
+    () => (platform === 'lazada' ? 'https://www.lazada.co.th/...' : 'https://shopee.co.th/...'),
+    [platform]
+  );
+
+  const isUrlValid = useMemo(() => {
+    try {
+      const u = new URL(url);
+      if (platform === 'lazada') return /lazada\.(co\.th|com)/i.test(u.hostname);
+      if (platform === 'shopee') return /shopee\.(co\.th|com)/i.test(u.hostname);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [url, platform]);
+
+  const createLink = useCallback(async () => {
     setErr(''); setResult(null); setLoading(true);
     try {
+      if (!isUrlValid) throw new Error('ลิงก์ไม่ถูกต้องสำหรับแพลตฟอร์มที่เลือก');
       const r = await fetch('/api/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           platform,
-          original_url: url,
-          product_name: productName || undefined, // ส่งไปเพื่อ gen subid
+          original_url: url.trim(),
+          product_name: productName.trim() || undefined, // ส่งไปเพื่อ gen subid
         })
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'สร้างลิงก์ไม่สำเร็จ');
-      setResult({ short_url: data.short_url, affiliate_url: data.affiliate_url });
+      setResult({ short_url: data.short_url, affiliate_url: data.affiliate_url, subid: data.subid });
     } catch (e:any) {
-      setErr(e.message);
+      setErr(e.message || 'เกิดข้อผิดพลาด');
     } finally {
       setLoading(false);
     }
+  }, [platform, url, productName, isUrlValid]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !loading && url) createLink();
   };
 
   return (
@@ -49,14 +72,26 @@ export default function Home() {
 
           <div className="flex gap-2 mb-4">
             <button
+              type="button"
+              aria-pressed={platform==='lazada'}
               onClick={()=>setPlatform('lazada')}
-              className={`px-4 py-2 rounded-xl border ${platform==='lazada'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}
+              className={`px-4 py-2 rounded-xl border transition ${
+                platform==='lazada'
+                  ? 'bg-orange-500 text-white border-orange-600'
+                  : 'bg-white text-orange-600 border-orange-300'
+              }`}
             >
               Lazada
             </button>
             <button
+              type="button"
+              aria-pressed={platform==='shopee'}
               onClick={()=>setPlatform('shopee')}
-              className={`px-4 py-2 rounded-xl border ${platform==='shopee'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}
+              className={`px-4 py-2 rounded-xl border transition ${
+                platform==='shopee'
+                  ? 'bg-orange-500 text-white border-orange-600'
+                  : 'bg-white text-orange-600 border-orange-300'
+              }`}
             >
               Shopee
             </button>
@@ -66,6 +101,7 @@ export default function Home() {
           <input
             value={productName}
             onChange={e=>setProductName(e.target.value)}
+            onKeyDown={onKeyDown}
             placeholder="เช่น ปลั๊กพ่วง 30 เมตร"
             className="w-full rounded-xl border border-orange-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mb-4"
           />
@@ -74,13 +110,19 @@ export default function Home() {
           <input
             value={url}
             onChange={e=>setUrl(e.target.value)}
-            placeholder={platform==='lazada'? 'https://www.lazada.co.th/...':'https://shopee.co.th/...'}
-            className="w-full rounded-xl border border-orange-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mb-4"
+            onKeyDown={onKeyDown}
+            placeholder={placeholder}
+            className={`w-full rounded-xl border px-4 py-3 focus:outline-none focus:ring-2 bg-white mb-2 ${
+              url && !isUrlValid ? 'border-red-400 focus:ring-red-300' : 'border-orange-300 focus:ring-orange-400'
+            }`}
           />
+          {url && !isUrlValid && (
+            <p className="text-xs text-red-600 mb-2">ลิงก์นี้ไม่ตรงกับแพลตฟอร์มที่เลือก</p>
+          )}
 
           <button
             onClick={createLink}
-            disabled={loading || !url}
+            disabled={loading || !url || !isUrlValid}
             className="px-5 py-3 rounded-xl bg-orange-600 text-white font-semibold shadow hover:bg-orange-700 disabled:opacity-50"
           >
             {loading ? 'กำลังสร้างลิงก์...' : 'สร้างลิงก์ของฉัน'}
@@ -93,11 +135,20 @@ export default function Home() {
               <p className="text-sm text-gray-600">ลิงก์สั้น (แชร์อันนี้):</p>
               <div className="flex items-center gap-2 mt-1">
                 <input readOnly value={result.short_url} className="flex-1 rounded-lg border border-gray-300 px-3 py-2"/>
-                <button onClick={()=>navigator.clipboard.writeText(result.short_url)} className="px-3 py-2 rounded-lg bg-orange-500 text-white">คัดลอก</button>
+                <button
+                  onClick={()=>navigator.clipboard.writeText(result.short_url)}
+                  className="px-3 py-2 rounded-lg bg-orange-500 text-white"
+                >
+                  คัดลอก
+                </button>
               </div>
 
               <p className="text-sm text-gray-600 mt-4">ลิงก์ปลายทาง (แนบ aff_id + subid แล้ว):</p>
               <input readOnly value={result.affiliate_url} className="w-full mt-1 rounded-lg border border-gray-300 px-3 py-2"/>
+
+              {result.subid && (
+                <p className="text-xs text-gray-500 mt-2">subid: <span className="font-mono">{result.subid}</span></p>
+              )}
 
               <p className="text-xs text-gray-500 mt-3">
                 เมื่อมีคนคลิกลิงก์สั้น ระบบจะตั้งคุกกี้ 30 วัน + บันทึกคลิก (IP/Referrer) แล้วพาไปยังหน้าสินค้า
@@ -114,7 +165,7 @@ export default function Home() {
           <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
             <li>อายุคุกกี้ถูกตั้งไว้ 30 วัน (แก้ได้ใน ENV)</li>
             <li>ค่าคอม Affiliate จะขึ้นกับนโยบายของแพลตฟอร์ม (ส่วนใหญ่ 7 วันสำหรับ Lazada/Shopee)</li>
-            <li>เปลี่ยนค่า aff_id และชื่อพารามิเตอร์ subid ได้ใน Environment Variables บน Vercel</li>
+            <li>ปรับค่า aff_id และชื่อพารามิเตอร์ subid ได้ใน Environment Variables บน Vercel</li>
           </ul>
         </section>
       </main>
