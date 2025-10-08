@@ -75,6 +75,7 @@ export default function Home() {
         </section>
       </main>
 
+      <RealtimePanel />
       <footer className="py-8 text-center text-xs text-gray-500">© {new Date().getFullYear()} Affiliate Link Generator</footer>
     </div>
   );
