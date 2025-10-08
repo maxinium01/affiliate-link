@@ -1,238 +1,68 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabaseBrowser } from "../lib/supabaseClient";
+import { useEffect, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-type ClickRow = {
-  id: string;
-  platform: "lazada" | "shopee";
-  target_url: string;
-  referrer: string | null;
-  created_at: string;
-};
-
-type ConvRow = {
-  id: string;
-  platform: "lazada" | "shopee";
-  order_id: string | null;
-  item_name: string | null;
-  qty: number | null;
-  status: "click" | "cart" | "paid";
-  commission: number | null;
-  currency: string | null;
-  subid: string | null;
-  created_at: string;
-};
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function RealtimePanel() {
-  const [clicks, setClicks] = useState<ClickRow[]>([]);
-  const [convs, setConvs] = useState<ConvRow[]>([]);
-  const [ready, setReady] = useState(false);
-
-  const stat = useMemo(() => {
-    return clicks.reduce(
-      (acc, r) => {
-        acc.total++;
-        acc[r.platform]++;
-        return acc;
-      },
-      { total: 0, lazada: 0, shopee: 0 } as {
-        total: number;
-        lazada: number;
-        shopee: number;
-      }
-    );
-  }, [clicks]);
+  const [clicks, setClicks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let active = true;
-
-    (async () => {
-      const { data } = await supabaseBrowser
+    const load = async () => {
+      const { data, error } = await supabase
         .from("click_logs")
-        .select("id, platform, target_url, referrer, created_at")
+        .select("platform, target_url, created_at")
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(10);
+      if (!error && data) setClicks(data);
+      setLoading(false);
+    };
+    load();
 
-      if (!active) return;
-      if (data) setClicks(data as ClickRow[]);
-      setReady(true);
-    })();
-
-    const clickChannel = supabaseBrowser
+    // subscribe realtime
+    const channel = supabase
       .channel("realtime:click_logs")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "click_logs" },
-        (payload: any) => {
-          const r = payload.new as ClickRow;
-          setClicks((prev) => [r, ...prev].slice(0, 30));
-        }
-      )
-      .subscribe();
-
-    // realtime conversions
-    (async () => {
-      const { data } = await supabaseBrowser
-        .from("conversions")
-        .select(
-          "id, platform, order_id, item_name, qty, status, commission, currency, subid, created_at"
-        )
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (data) setConvs(data as ConvRow[]);
-    })();
-
-    const convChannel = supabaseBrowser
-      .channel("realtime:conversions")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "conversions" },
-        (payload: any) => {
-          const r = payload.new as ConvRow;
-          setConvs((prev) => [r, ...prev].slice(0, 30));
+        (payload) => {
+          setClicks((prev) => [payload.new, ...prev].slice(0, 10));
         }
       )
       .subscribe();
 
     return () => {
-      active = false;
-      supabaseBrowser.removeChannel(clickChannel);
-      supabaseBrowser.removeChannel(convChannel);
+      supabase.removeChannel(channel);
     };
   }, []);
 
-  const sum = convs.reduce((acc, c) => acc + (c.commission || 0), 0);
+  if (loading) return <p className="text-gray-500 text-sm">กำลังโหลดข้อมูล...</p>;
 
   return (
-    <section className="mt-8 space-y-10">
-      {/* ตารางคลิก */}
-      <div className="bg-white border border-orange-200 rounded-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-orange-700">
-            📈 คลิกแบบเรียลไทม์
-          </h3>
-          <div className="text-sm">
-            รวม: <b>{stat.total}</b> • Lazada:{" "}
-            <b className="text-orange-600">{stat.lazada}</b> • Shopee:{" "}
-            <b className="text-orange-600">{stat.shopee}</b>
-          </div>
-        </div>
-
-        {!ready && <p className="text-sm text-gray-500">กำลังโหลดข้อมูล…</p>}
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-600 border-b">
-                <th className="py-2">เวลา</th>
-                <th className="py-2">แพลตฟอร์ม</th>
-                <th className="py-2">Referrer</th>
-                <th className="py-2">ปลายทาง</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clicks.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="py-2">
-                    {new Date(r.created_at).toLocaleString()}
-                  </td>
-                  <td className="py-2">
-                    <span
-                      className={`px-2 py-1 rounded-lg text-white ${
-                        r.platform === "lazada"
-                          ? "bg-orange-500"
-                          : "bg-orange-400"
-                      }`}
-                    >
-                      {r.platform}
-                    </span>
-                  </td>
-                  <td className="py-2 text-gray-600">{r.referrer || "-"}</td>
-                  <td className="py-2 truncate max-w-[320px]">
-                    <a
-                      className="underline"
-                      href={r.target_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {r.target_url}
-                    </a>
-                  </td>
-                </tr>
-              ))}
-              {clicks.length === 0 && ready && (
-                <tr>
-                  <td className="py-3 text-gray-500" colSpan={4}>
-                    ยังไม่มีคลิก
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ตาราง Conversion */}
-      <div className="bg-white border border-orange-200 rounded-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-orange-700">
-            💰 ค่าคอม & สถานะออเดอร์
-          </h3>
-          <div className="text-sm">
-            รวมค่าคอม:{" "}
-            <b className="text-orange-700">{sum.toFixed(2)} THB</b>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-600 border-b">
-                <th className="py-2">เวลา</th>
-                <th className="py-2">แพลตฟอร์ม</th>
-                <th className="py-2">สินค้า</th>
-                <th className="py-2">สถานะ</th>
-                <th className="py-2">subid</th>
-                <th className="py-2">ค่าคอม</th>
-              </tr>
-            </thead>
-            <tbody>
-              {convs.map((c) => (
-                <tr key={c.id} className="border-b last:border-0">
-                  <td className="py-2">
-                    {new Date(c.created_at).toLocaleString()}
-                  </td>
-                  <td className="py-2">{c.platform}</td>
-                  <td className="py-2">{c.item_name || "-"}</td>
-                  <td className="py-2">
-                    <span
-                      className={`px-2 py-1 rounded-lg text-white ${
-                        c.status === "paid"
-                          ? "bg-green-600"
-                          : c.status === "cart"
-                          ? "bg-amber-500"
-                          : "bg-gray-500"
-                      }`}
-                    >
-                      {c.status}
-                    </span>
-                  </td>
-                  <td className="py-2">{c.subid || "-"}</td>
-                  <td className="py-2">
-                    {c.commission?.toFixed(2)} {c.currency || ""}
-                  </td>
-                </tr>
-              ))}
-              {convs.length === 0 && (
-                <tr>
-                  <td className="py-3 text-gray-500" colSpan={6}>
-                    ยังไม่มีข้อมูลรายได้
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    <div className="mt-10 border-t border-orange-200 pt-6">
+      <h3 className="text-lg font-semibold text-orange-700 mb-3">
+        ⚡ การคลิกล่าสุด (เรียลไทม์)
+      </h3>
+      <ul className="space-y-2">
+        {clicks.map((c, i) => (
+          <li
+            key={i}
+            className="text-sm bg-orange-50 border border-orange-200 rounded-lg p-2"
+          >
+            <span className="font-semibold text-orange-600">{c.platform}</span>{" "}
+            <span className="text-gray-700 truncate">{c.target_url}</span>
+            <span className="block text-xs text-gray-500">
+              {new Date(c.created_at).toLocaleString("th-TH")}
+            </span>
+          </li>
+        ))}
+        {!clicks.length && (
+          <li className="text-sm text-gray-500">ยังไม่มีการคลิก</li>
+        )}
+      </ul>
+    </div>
   );
 }
