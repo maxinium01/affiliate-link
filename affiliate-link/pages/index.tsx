@@ -1,9 +1,14 @@
-import RealtimePanel from "../components/RealtimePanel";
+// pages/index.tsx
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
+
+// โหลดแบบ client-only กัน SSR ใช้ env ฝั่ง client ไม่เจอ
+const RealtimePanel = dynamic(() => import('../components/RealtimePanel'), { ssr: false });
 
 export default function Home() {
   const [platform, setPlatform] = useState<'lazada'|'shopee'>('lazada');
   const [url, setUrl] = useState('');
+  const [productName, setProductName] = useState(''); // ชื่อสินค้า → ทำ subid
   const [result, setResult] = useState<{short_url:string, affiliate_url:string}|null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -12,15 +17,22 @@ export default function Home() {
     setErr(''); setResult(null); setLoading(true);
     try {
       const r = await fetch('/api/create', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, original_url: url })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform,
+          original_url: url,
+          product_name: productName || undefined, // ส่งไปเพื่อ gen subid
+        })
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'สร้างลิงก์ไม่สำเร็จ');
       setResult({ short_url: data.short_url, affiliate_url: data.affiliate_url });
     } catch (e:any) {
       setErr(e.message);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -36,15 +48,42 @@ export default function Home() {
           <h2 className="text-xl font-semibold text-orange-700 mb-4">🔗 สร้างลิงก์ Affiliate ของคุณเอง</h2>
 
           <div className="flex gap-2 mb-4">
-            <button onClick={()=>setPlatform('lazada')} className={`px-4 py-2 rounded-xl border ${platform==='lazada'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}>Lazada</button>
-            <button onClick={()=>setPlatform('shopee')} className={`px-4 py-2 rounded-xl border ${platform==='shopee'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}>Shopee</button>
+            <button
+              onClick={()=>setPlatform('lazada')}
+              className={`px-4 py-2 rounded-xl border ${platform==='lazada'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}
+            >
+              Lazada
+            </button>
+            <button
+              onClick={()=>setPlatform('shopee')}
+              className={`px-4 py-2 rounded-xl border ${platform==='shopee'?'bg-orange-500 text-white border-orange-600':'bg-white text-orange-600 border-orange-300'}`}
+            >
+              Shopee
+            </button>
           </div>
 
-          <label className="block text-sm text-orange-800 mb-1">ใส่ลิงก์สินค้าของคุณ</label>
-          <input value={url} onChange={e=>setUrl(e.target.value)} placeholder={platform==='lazada'? 'https://www.lazada.co.th/...':'https://shopee.co.th/...'} className="w-full rounded-xl border border-orange-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mb-4" />
+          <label className="block text-sm text-orange-800 mb-1">ชื่อสินค้า (ใช้ทำ subid)</label>
+          <input
+            value={productName}
+            onChange={e=>setProductName(e.target.value)}
+            placeholder="เช่น ปลั๊กพ่วง 30 เมตร"
+            className="w-full rounded-xl border border-orange-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mb-4"
+          />
 
-          <button onClick={createLink} disabled={loading||!url} className="px-5 py-3 rounded-xl bg-orange-600 text-white font-semibold shadow hover:bg-orange-700 disabled:opacity-50">
-            {loading? 'กำลังสร้างลิงก์...' : 'สร้างลิงก์ของฉัน'}
+          <label className="block text-sm text-orange-800 mb-1">ใส่ลิงก์สินค้าของคุณ</label>
+          <input
+            value={url}
+            onChange={e=>setUrl(e.target.value)}
+            placeholder={platform==='lazada'? 'https://www.lazada.co.th/...':'https://shopee.co.th/...'}
+            className="w-full rounded-xl border border-orange-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mb-4"
+          />
+
+          <button
+            onClick={createLink}
+            disabled={loading || !url}
+            className="px-5 py-3 rounded-xl bg-orange-600 text-white font-semibold shadow hover:bg-orange-700 disabled:opacity-50"
+          >
+            {loading ? 'กำลังสร้างลิงก์...' : 'สร้างลิงก์ของฉัน'}
           </button>
 
           {err && <p className="mt-3 text-red-600">❌ {err}</p>}
@@ -57,26 +96,32 @@ export default function Home() {
                 <button onClick={()=>navigator.clipboard.writeText(result.short_url)} className="px-3 py-2 rounded-lg bg-orange-500 text-white">คัดลอก</button>
               </div>
 
-              <p className="text-sm text-gray-600 mt-4">ลิงก์ปลายทาง (แนบ aff_id แล้ว):</p>
+              <p className="text-sm text-gray-600 mt-4">ลิงก์ปลายทาง (แนบ aff_id + subid แล้ว):</p>
               <input readOnly value={result.affiliate_url} className="w-full mt-1 rounded-lg border border-gray-300 px-3 py-2"/>
 
-              <p className="text-xs text-gray-500 mt-3">เมื่อมีคนคลิกลิงก์สั้น ระบบจะตั้งคุกกี้ 30 วัน + บันทึกคลิก (IP/Referrer) แล้วพาไปยังหน้าสินค้า</p>
+              <p className="text-xs text-gray-500 mt-3">
+                เมื่อมีคนคลิกลิงก์สั้น ระบบจะตั้งคุกกี้ 30 วัน + บันทึกคลิก (IP/Referrer) แล้วพาไปยังหน้าสินค้า
+              </p>
             </div>
           )}
         </section>
+
+        {/* แผงเรียลไทม์ */}
+        <RealtimePanel />
 
         <section className="mt-8">
           <h3 className="text-lg font-semibold text-orange-700 mb-2">📌 หมายเหตุ</h3>
           <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
             <li>อายุคุกกี้ถูกตั้งไว้ 30 วัน (แก้ได้ใน ENV)</li>
             <li>ค่าคอม Affiliate จะขึ้นกับนโยบายของแพลตฟอร์ม (ส่วนใหญ่ 7 วันสำหรับ Lazada/Shopee)</li>
-            <li>เปลี่ยนค่า aff_id ได้ใน Environment Variables บน Vercel</li>
+            <li>เปลี่ยนค่า aff_id และชื่อพารามิเตอร์ subid ได้ใน Environment Variables บน Vercel</li>
           </ul>
         </section>
-      <RealtimePanel />
       </main>
 
-      <footer className="py-8 text-center text-xs text-gray-500">© {new Date().getFullYear()} Affiliate Link Generator</footer>
+      <footer className="py-8 text-center text-xs text-gray-500">
+        © {new Date().getFullYear()} Affiliate Link Generator
+      </footer>
     </div>
   );
 }
